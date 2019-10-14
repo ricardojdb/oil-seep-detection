@@ -1,0 +1,7 @@
+.ipynb_checkpoints/*
+.DS_Store
+
+__pycache__/*
+
+seep_detection/*
+!seep_detection/.keep
