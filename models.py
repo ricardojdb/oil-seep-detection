@@ -4,7 +4,7 @@ from keras.models import *
 
 import tensorflow as tf
 
-
+# https://www.kaggle.com/meaninglesslives/getting-0-87-on-private-lb-using-kaggle-kernel/
 def convolution_block(x, filters, size, strides=(1,1), padding='same', activation=True):
     x = Conv2D(filters, size, strides=strides, padding=padding)(x)
     x = BatchNormalization()(x)
