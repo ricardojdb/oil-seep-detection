@@ -1,67 +1,101 @@
-from keras.models import *
+from keras.applications.xception import Xception
 from keras.layers import *
+from keras.models import *
 
-def conv2d_block(input_tensor, n_filters, kernel_size = 3, batchnorm = True):
-	"""Function to add 2 convolutional layers with the parameters passed to it"""
-	# first layer
-	x = Conv2D(filters = n_filters, kernel_size = (kernel_size, kernel_size),\
-						kernel_initializer = 'he_normal', padding = 'same')(input_tensor)
-	if batchnorm:
-			x = BatchNormalization()(x)
-	x = Activation('relu')(x)
-	
-	# second layer
-	x = Conv2D(filters = n_filters, kernel_size = (kernel_size, kernel_size),\
-						kernel_initializer = 'he_normal', padding = 'same')(input_tensor)
-	if batchnorm:
-			x = BatchNormalization()(x)
-	x = Activation('relu')(x)
-	
-	return x
-  
-def get_unet(n_filters = 16, dropout = 0.1, batchnorm = True):
+import tensorflow as tf
 
-	input_img = Input((256, 256, 1), name='img')
 
-	c1 = conv2d_block(input_img, n_filters * 1, kernel_size = 3, batchnorm = batchnorm)
-	p1 = MaxPooling2D((2, 2))(c1)
-	p1 = Dropout(dropout)(p1)
-	
-	c2 = conv2d_block(p1, n_filters * 2, kernel_size = 3, batchnorm = batchnorm)
-	p2 = MaxPooling2D((2, 2))(c2)
-	p2 = Dropout(dropout)(p2)
-	
-	c3 = conv2d_block(p2, n_filters * 4, kernel_size = 3, batchnorm = batchnorm)
-	p3 = MaxPooling2D((2, 2))(c3)
-	p3 = Dropout(dropout)(p3)
-	
-	c4 = conv2d_block(p3, n_filters * 8, kernel_size = 3, batchnorm = batchnorm)
-	p4 = MaxPooling2D((2, 2))(c4)
-	p4 = Dropout(dropout)(p4)
-	
-	c5 = conv2d_block(p4, n_filters = n_filters * 16, kernel_size = 3, batchnorm = batchnorm)
-	
-	# Expansive Path
-	u6 = Conv2DTranspose(n_filters * 8, (3, 3), strides = (2, 2), padding = 'same')(c5)
-	u6 = concatenate([u6, c4])
-	u6 = Dropout(dropout)(u6)
-	c6 = conv2d_block(u6, n_filters * 8, kernel_size = 3, batchnorm = batchnorm)
-	
-	u7 = Conv2DTranspose(n_filters * 4, (3, 3), strides = (2, 2), padding = 'same')(c6)
-	u7 = concatenate([u7, c3])
-	u7 = Dropout(dropout)(u7)
-	c7 = conv2d_block(u7, n_filters * 4, kernel_size = 3, batchnorm = batchnorm)
-	
-	u8 = Conv2DTranspose(n_filters * 2, (3, 3), strides = (2, 2), padding = 'same')(c7)
-	u8 = concatenate([u8, c2])
-	u8 = Dropout(dropout)(u8)
-	c8 = conv2d_block(u8, n_filters * 2, kernel_size = 3, batchnorm = batchnorm)
-	
-	u9 = Conv2DTranspose(n_filters * 1, (3, 3), strides = (2, 2), padding = 'same')(c8)
-	u9 = concatenate([u9, c1])
-	u9 = Dropout(dropout)(u9)
-	c9 = conv2d_block(u9, n_filters * 1, kernel_size = 3, batchnorm = batchnorm)
-	
-	outputs = Conv2D(8, (1, 1), activation='softmax')(c9)
-	model = Model(inputs=[input_img], outputs=[outputs])
-	return model
+def convolution_block(x, filters, size, strides=(1,1), padding='same', activation=True):
+    x = Conv2D(filters, size, strides=strides, padding=padding)(x)
+    x = BatchNormalization()(x)
+    if activation == True:
+        x = LeakyReLU(alpha=0.1)(x)
+    return x
+
+def residual_block(blockInput, num_filters=16):
+    x = LeakyReLU(alpha=0.1)(blockInput)
+    x = BatchNormalization()(x)
+    blockInput = BatchNormalization()(blockInput)
+    x = convolution_block(x, num_filters, (3,3) )
+    x = convolution_block(x, num_filters, (3,3), activation=False)
+    x = Add()([x, blockInput])
+    return x
+
+def unet(input_shape=(None, None, 3)):
+
+    backbone = Xception(input_shape=input_shape,weights='imagenet',include_top=False)
+    input = backbone.input
+    start_neurons = 16
+
+    conv4 = backbone.layers[121].output
+    conv4 = LeakyReLU(alpha=0.1)(conv4)
+    pool4 = MaxPooling2D((2, 2))(conv4)
+    pool4 = Dropout(0.1)(pool4)
+    
+     # Middle
+    convm = Conv2D(start_neurons * 32, (3, 3), activation=None, padding="same")(pool4)
+    convm = residual_block(convm,start_neurons * 32)
+    convm = residual_block(convm,start_neurons * 32)
+    convm = LeakyReLU(alpha=0.1)(convm)
+    
+    # 10 -> 20
+    deconv4 = Conv2DTranspose(start_neurons * 16, (3, 3), strides=(2, 2), padding="same")(convm)
+    uconv4 = concatenate([deconv4, conv4])
+    uconv4 = Dropout(0.1)(uconv4)
+    
+    uconv4 = Conv2D(start_neurons * 16, (3, 3), activation=None, padding="same")(uconv4)
+    uconv4 = residual_block(uconv4,start_neurons * 16)
+    uconv4 = residual_block(uconv4,start_neurons * 16)
+    uconv4 = LeakyReLU(alpha=0.1)(uconv4)
+    
+    # 10 -> 20
+    deconv3 = Conv2DTranspose(start_neurons * 8, (3, 3), strides=(2, 2), padding="same")(uconv4)
+    conv3 = backbone.layers[31].output
+    uconv3 = concatenate([deconv3, conv3])    
+    uconv3 = Dropout(0.1)(uconv3)
+    
+    uconv3 = Conv2D(start_neurons * 8, (3, 3), activation=None, padding="same")(uconv3)
+    uconv3 = residual_block(uconv3,start_neurons * 8)
+    uconv3 = residual_block(uconv3,start_neurons * 8)
+    uconv3 = LeakyReLU(alpha=0.1)(uconv3)
+
+    # 20 -> 40
+    deconv2 = Conv2DTranspose(start_neurons * 4, (3, 3), strides=(2, 2), padding="same")(uconv3)
+    conv2 = backbone.layers[21].output
+    conv2 = ZeroPadding2D(((1,0),(1,0)))(conv2)
+    uconv2 = concatenate([deconv2, conv2])
+        
+    uconv2 = Dropout(0.1)(uconv2)
+    uconv2 = Conv2D(start_neurons * 4, (3, 3), activation=None, padding="same")(uconv2)
+    uconv2 = residual_block(uconv2,start_neurons * 4)
+    uconv2 = residual_block(uconv2,start_neurons * 4)
+    uconv2 = LeakyReLU(alpha=0.1)(uconv2)
+    
+    # 40 -> 80
+    deconv1 = Conv2DTranspose(start_neurons * 2, (3, 3), strides=(2, 2), padding="same")(uconv2)
+    conv1 = backbone.layers[11].output
+    conv1 = ZeroPadding2D(((3,0),(3,0)))(conv1)
+    uconv1 = concatenate([deconv1, conv1])
+    
+    uconv1 = Dropout(0.1)(uconv1)
+    uconv1 = Conv2D(start_neurons * 2, (3, 3), activation=None, padding="same")(uconv1)
+    uconv1 = residual_block(uconv1,start_neurons * 2)
+    uconv1 = residual_block(uconv1,start_neurons * 2)
+    uconv1 = LeakyReLU(alpha=0.1)(uconv1)
+    
+    
+    # 80 -> 160
+    uconv0 = Conv2DTranspose(start_neurons * 1, (3, 3), strides=(2, 2), padding="same")(uconv1)   
+    uconv0 = Dropout(0.1)(uconv0)
+    uconv0 = Conv2D(start_neurons * 1, (3, 3), activation=None, padding="same")(uconv0)
+    uconv0 = residual_block(uconv0,start_neurons * 1)
+    uconv0 = residual_block(uconv0,start_neurons * 1)
+    uconv0 = LeakyReLU(alpha=0.1)(uconv0)
+    
+    uconv0 = Dropout(0.1/2)(uconv0)
+    output_layer = Conv2D(1, (1,1), padding="same", activation="sigmoid")(uconv0)    
+    
+    model = Model(input, output_layer)
+    model.name = 'u-xception'
+
+    return model

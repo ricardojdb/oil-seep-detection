@@ -2,6 +2,9 @@
 .DS_Store
 
 __pycache__/*
+__MACOSX
 
+
+seep_detection.zip
 seep_detection/*
 !seep_detection/.keep
