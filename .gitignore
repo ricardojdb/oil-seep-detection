@@ -4,7 +4,7 @@
 __pycache__/*
 __MACOSX
 
-
+model.h5
 seep_detection.zip
 seep_detection/*
 !seep_detection/.keep
